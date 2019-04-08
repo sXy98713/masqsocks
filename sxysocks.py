@@ -1,6 +1,7 @@
 import asyncio
+import ast
 from cipher import Cipher
-BUFFER_SIZE = 4096
+BUFFER_SIZE = 65535
 is_remote = True
 
 
@@ -13,24 +14,14 @@ def print_exception(e):
 class Connection:
     def __init__(self, reader, writer):
         #self._cipher = None
-        self.header = {
-            'Host': 'www.super-ping.com',
-            'Connection': 'keep-alive',
-            'Cache-Control': 'max-age=0',
-            'Accept': 'text/html, */*; q=0.01',
-            'X-Requested-With': 'XMLHttpRequest',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2272.89 Safari/537.36',
-            'DNT': '1',
-            'Referer': 'http://www.super-ping.com/?ping=www.google.com&locale=sc',
-            'Accept-Encoding': 'gzip, deflate, sdch',
-            'Accept-Language': 'zh-CN,zh;q=0.8,ja;q=0.6'
-        }
+        self.header = b'GET /blog.html HTTP/1.1\r\nAccept:image/gif.image/jpeg,*/*\r\nAccept-Language:zh-cn\r\nConnection:Keep-Alive\r\nHost:localhost\r\nUser-Agent:Mozila/4.0(compatible;MSIE5.01;Window NT5.0)\r\nAccept-Encoding:gzip,deflate\r\nContent-Length:'
         self._reader = reader
         self._writer = writer
 
-
-    async def read(self):
+    async def readfromclient(self):
         data = await self._reader.read(BUFFER_SIZE)
+        #print(data)
+
         return data
     
 
@@ -41,35 +32,56 @@ class Connection:
     async def close(self):
         self._writer.close()
 
-    async def decode(self, bs):
-        data = bs.decode('utf-8')
-        #去HTTP头
-        data = data.split("\r\n\r\n")[1]
+    async def readfromremote(self):
+        #bytes -> str
+        #print(bs)
+        #
+        n = 0
+        while (n < 7):
+            line = await self._reader.readuntil(b'\r\n')
+            n = n + 1
+        line  = await self._reader.readuntil(b'\r\n\r\n')
+        if line.split(b':')[0] == b'Content-Length':
+            b_length = (line.split(b':')[1])[0: -4]
+            length = int.from_bytes(b_length, byteorder = 'little')
+            #print("from remote:")
+            #print(length)
+            msg = await self._reader.readexactly(length)
         #解密
         #self._cipher.decode(bytearray(data))
-        return data
+            return msg
+        else:
+            return None
 
-
-    async def encode(self, data):
+    def encode(self, data):
         #加密
         #self._cipher.encode(data)
         #加头
-        return (bytearray(self.header) + data)
+        #print(str(len(data)))
+        b_len = len(data).to_bytes((len(data).bit_length() + 7) // 8, byteorder='little')
+        #print(b_len)
+        msg = self.header + b_len + b'\r\n\r\n' + data
+        #str -> bytes:
+        return msg
+
     
 async def copy_to(src: Connection, dst: Connection, remote2local: bool):
     try:
         while True:
-            bs = src.reader.read()
-            if not bs:
-                print("copy done")
-                break
-            if remote2local: 
+            if remote2local:
                 #去头解密后直接转发
-                data = src.decode(bs)
-                await dst.write(data)
+                bs = await src.readfromremote()
+                if not bs:
+                #   print("copy done")
+                   return          
+                await dst.write(bs)
             else:
+                bs = await src.readfromclient()
                 #加密加头后转发
-                await dst.write(dst.encode(bs))
+                #print("from client:")
+                #print(len(bs))
+                data = dst.encode(bs)
+                await dst.write(data)
     except Exception as e:
         print(e)
 
