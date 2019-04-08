@@ -12,6 +12,7 @@ async def handleConn(remoter: Connection):
     #解析socks协议
     buf = remoter.read()
     data = remoter.decode(buf)
+    print(data)
     if not data or data[0] != 0x05:
         remoter.close()
         return
